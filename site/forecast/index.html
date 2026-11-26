@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Enrolment forecasting · Samuel Agbaglo</title>
+  <meta name="description" content="Weekly enrolment forecast with trend, seasonality and prediction intervals, built in NumPy and backtested against baselines.">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/chart.umd.js"></script>
+</head>
+<body>
+  <header class="site"><div class="inner">
+    <a class="brand" href="../">Samuel Agbaglo · ML projects</a>
+    <nav>
+      <a href="../churn/">Churn risk</a>
+      <a href="../health/">Customer health</a>
+      <a class="active" href="../forecast/">Forecasting</a>
+    </nav>
+  </div></header>
+
+  <main>
+    <h1>Enrolment forecasting</h1>
+    <p class="lede">Forecasts weekly course enrolments for the next six months, with a range for how far actual numbers might fall from the forecast. It was checked against simple baselines before being trusted.</p>
+    <span class="note">Three years of synthetic weekly data. No real platform data is used.</span>
+
+    <div class="grid four" style="margin-top:22px" id="kpis"></div>
+
+    <h2>Forecast</h2>
+    <div class="card">
+      <div class="tabs" id="views">
+        <button type="button" class="on" data-view="forecast">Forecast</button>
+        <button type="button" data-view="backtest">Backtest</button>
+      </div>
+      <div class="field" id="horizon-field" style="max-width:360px">
+        <div class="row"><label for="horizon">Forecast horizon</label><output id="horizon-out"></output></div>
+        <input type="range" id="horizon" min="4" max="26" step="1" value="13">
+      </div>
+      <div style="position:relative;height:380px"><canvas id="chart"></canvas></div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:0" id="caption"></p>
+    </div>
+
+    <div class="grid two" style="margin-top:16px">
+      <div class="card">
+        <h3>Backtest on the last 26 weeks</h3>
+        <p style="font-size:14px;color:var(--muted);margin-top:0">The model was trained on the first 130 weeks and asked to forecast the final 26. Lower error is better.</p>
+        <table>
+          <thead><tr><th>Method</th><th class="num">Mean absolute % error</th></tr></thead>
+          <tbody id="backtest"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3>Next weeks</h3>
+        <div class="scroll" style="max-height:260px">
+          <table>
+            <thead><tr><th>Week starting</th><th class="num">Forecast</th><th class="num">90% range</th></tr></thead>
+            <tbody id="table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <h2>How it works</h2>
+    <div class="card prose">
+      <ul>
+        <li><strong>Data.</strong> 156 weeks of enrolments with steady growth, yearly seasonality, a year-end holiday dip and random noise.</li>
+        <li><strong>Model.</strong> A regression on log enrolments with a linear trend, four pairs of Fourier terms for yearly seasonality and a holiday flag, fitted with NumPy least squares. Working in logs makes growth and seasonality multiplicative, which suits enrolment data.</li>
+        <li><strong>Baselines.</strong> A model is only worth using if it beats simple rules. Naive repeats last week's number; seasonal naive repeats the same week last year.</li>
+        <li><strong>Uncertainty.</strong> The 90% range comes from the spread of the model's residuals. <span id="coverage"></span></li>
+        <li><strong>In the browser.</strong> The forecast is computed in Python and exported to JSON; this page draws it with Chart.js.</li>
+      </ul>
+      <p><a href="https://github.com/sammiel/ml-portfolio/blob/main/training/forecast.py">Training code on GitHub</a></p>
+    </div>
+  </main>
+
+  <footer><div class="inner">Built by Samuel Agbaglo · Synthetic data · Models trained in Python, served as static files</div></footer>
+
+  <script src="../assets/common.js"></script>
+  <script>
+    const fmtDate = (d) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    const weekDate = (start, i) => { const d = new Date(start + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 7 * i); return d; };
+
+    loadModel("model.json").then((model) => {
+      const m = model.metrics;
+      const n = model.history.length;
+      const growth = m.annual_growth;
+
+      document.getElementById("kpis").innerHTML = [
+        ["Model error (backtest)", pct(m.model_mape, 1), "mean absolute % error"],
+        ["Best baseline error", pct(m.seasonal_naive_mape, 1), "seasonal naive"],
+        ["Underlying growth", `+${pct(growth)}`, "per year, from the trend term"],
+        ["Next 13 weeks", model.forecast.mean.slice(0, 13).reduce((a, b) => a + b, 0).toLocaleString(), "forecast enrolments"],
+      ].map(([l, v, s]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div></div>`).join("");
+
+      document.getElementById("backtest").innerHTML = [
+        ["This model", m.model_mape],
+        ["Seasonal naive (same week last year)", m.seasonal_naive_mape],
+        ["Naive (last week's value)", m.naive_mape],
+      ].map(([k, v], i) => `<tr><td>${i === 0 ? `<strong>${k}</strong>` : k}</td><td class="num">${pct(v, 1)}</td></tr>`).join("");
+
+      document.getElementById("coverage").textContent =
+        `In the backtest, ${pct(m.interval_coverage)} of actual weeks fell inside the 90% range. That is slightly narrow, because the range ignores uncertainty in the fitted trend; widening it or using a bootstrap would be the next improvement.`;
+
+      const css = getComputedStyle(document.documentElement);
+      const ink = css.getPropertyValue("--ink").trim();
+      const accent = css.getPropertyValue("--accent").trim();
+      const warn = css.getPropertyValue("--warn").trim();
+
+      const chart = new Chart(document.getElementById("chart"), {
+        type: "line",
+        data: { labels: [], datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { labels: { filter: (item) => item.text !== "_lo", boxWidth: 14 } },
+            tooltip: { filter: (item) => item.dataset.label !== "_lo" && item.dataset.label !== "90% range" },
+          },
+          scales: {
+            x: { ticks: { maxTicksLimit: 8 }, grid: { display: false } },
+            y: { ticks: { callback: (v) => v.toLocaleString() } },
+          },
+        },
+      });
+
+      let view = "forecast";
+      const horizon = document.getElementById("horizon");
+
+      function draw() {
+        const h = Number(horizon.value);
+        document.getElementById("horizon-out").textContent = `${h} weeks`;
+        document.getElementById("horizon-field").style.display = view === "forecast" ? "" : "none";
+
+        if (view === "forecast") {
+          const show = 52;
+          const from = n - show;
+          const labels = [];
+          for (let i = from; i < n + h; i++) labels.push(fmtDate(weekDate(model.start, i)));
+          const pad = (arr, before, after) => [...Array(before).fill(null), ...arr, ...Array(after).fill(null)];
+          const f = model.forecast;
+          // Join the forecast line to the last actual week so there's no gap.
+          const last = model.history[n - 1];
+          chart.data.labels = labels;
+          chart.data.datasets = [
+            { label: "Actual", data: pad(model.history.slice(from), 0, h), borderColor: ink, borderWidth: 1.6, pointRadius: 0 },
+            { label: "_lo", data: pad([last, ...f.lo.slice(0, h)], show - 1, 0), borderWidth: 0, pointRadius: 0, fill: false },
+            { label: "90% range", data: pad([last, ...f.hi.slice(0, h)], show - 1, 0), borderWidth: 0, pointRadius: 0, fill: "-1", backgroundColor: "rgba(31,95,139,0.15)" },
+            { label: "Forecast", data: pad([last, ...f.mean.slice(0, h)], show - 1, 0), borderColor: accent, borderWidth: 2, borderDash: [5, 4], pointRadius: 0 },
+          ];
+          const total = f.mean.slice(0, h).reduce((a, b) => a + b, 0);
+          document.getElementById("caption").textContent =
+            `Showing the last 52 weeks and a ${h}-week forecast: ${total.toLocaleString()} enrolments expected in total. The shaded band is the 90% range.`;
+        } else {
+          const b = model.backtest;
+          const from = b.start_index - 52;
+          const labels = [];
+          for (let i = from; i < n; i++) labels.push(fmtDate(weekDate(model.start, i)));
+          const pad = (arr) => [...Array(b.start_index - from).fill(null), ...arr];
+          chart.data.labels = labels;
+          chart.data.datasets = [
+            { label: "Actual", data: model.history.slice(from), borderColor: ink, borderWidth: 1.6, pointRadius: 0 },
+            { label: "Model forecast", data: pad(b.pred), borderColor: accent, borderWidth: 2, borderDash: [5, 4], pointRadius: 0 },
+            { label: "Seasonal naive", data: pad(b.seasonal_naive), borderColor: warn, borderWidth: 1.5, borderDash: [2, 3], pointRadius: 0 },
+          ];
+          document.getElementById("caption").textContent =
+            "The model and the seasonal-naive baseline both forecast the final 26 weeks without seeing them. The model tracks the actual numbers more closely because it also captures growth.";
+        }
+        chart.update();
+
+        document.getElementById("table").innerHTML = model.forecast.mean.slice(0, h).map((v, i) =>
+          `<tr><td>${fmtDate(weekDate(model.start, n + i))}</td><td class="num">${v.toLocaleString()}</td>
+           <td class="num">${model.forecast.lo[i].toLocaleString()} – ${model.forecast.hi[i].toLocaleString()}</td></tr>`
+        ).join("");
+      }
+
+      horizon.addEventListener("input", draw);
+      document.querySelectorAll("#views button").forEach((b) => b.addEventListener("click", () => {
+        view = b.dataset.view;
+        document.querySelectorAll("#views button").forEach((x) => x.classList.toggle("on", x === b));
+        draw();
+      }));
+      draw();
+    });
+  </script>
+</body>
+</html>

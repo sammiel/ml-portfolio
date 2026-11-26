@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ML projects · Samuel Agbaglo</title>
+  <meta name="description" content="Three applied machine learning projects: churn risk, customer health scoring and enrolment forecasting.">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site"><div class="inner">
+    <a class="brand" href="./">Samuel Agbaglo · ML projects</a>
+    <nav>
+      <a href="churn/">Churn risk</a>
+      <a href="health/">Customer health</a>
+      <a href="forecast/">Forecasting</a>
+    </nav>
+  </div></header>
+
+  <main>
+    <h1>Applied machine learning for customer analytics</h1>
+    <p class="lede">Three small, interactive projects based on problems I have worked on in banking and enterprise education: spotting customers likely to leave, scoring account health, and forecasting demand. Each model is trained in Python and runs in your browser.</p>
+    <span class="note">All data is synthetic, generated to resemble real patterns. No employer or customer data is used.</span>
+
+    <div class="grid three" style="margin-top:26px">
+      <a class="card project-card" href="churn/">
+        <span class="tag">Classification</span>
+        <h3 style="margin-top:6px">Churn risk scorer</h3>
+        <p>Predicts which retail-bank customers are likely to leave next quarter and explains why. Includes a benchmark against gradient boosting and a calibration check.</p>
+        <span class="go">Open project →</span>
+      </a>
+      <a class="card project-card" href="health/">
+        <span class="tag">Scoring</span>
+        <h3 style="margin-top:6px">Customer health scoring</h3>
+        <p>Turns account usage into a 0 to 100 health score fitted to renewal outcomes, with a portfolio view and what-if analysis for each account.</p>
+        <span class="go">Open project →</span>
+      </a>
+      <a class="card project-card" href="forecast/">
+        <span class="tag">Time series</span>
+        <h3 style="margin-top:6px">Enrolment forecasting</h3>
+        <p>Forecasts weekly enrolments with trend, seasonality and a 90% range, built in NumPy and backtested against naive baselines.</p>
+        <span class="go">Open project →</span>
+      </a>
+    </div>
+
+    <h2>Stack</h2>
+    <div class="card prose">
+      <p style="margin:0">Python, NumPy and scikit-learn for data generation, training and evaluation. Models are exported to JSON and scored in plain JavaScript; charts use Chart.js. Hosted as a static site on Netlify. <a href="https://github.com/sammiel/ml-portfolio">Source code on GitHub</a>.</p>
+    </div>
+  </main>
+
+  <footer><div class="inner">Built by Samuel Agbaglo · <a href="https://www.linkedin.com/in/samuel-agbaglo">LinkedIn</a></div></footer>
+</body>
+</html>

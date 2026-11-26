@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Churn risk scorer · Samuel Agbaglo</title>
+  <meta name="description" content="Interactive churn risk model for retail-bank customers, trained in Python and scored in the browser.">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <header class="site"><div class="inner">
+    <a class="brand" href="../">Samuel Agbaglo · ML projects</a>
+    <nav>
+      <a class="active" href="../churn/">Churn risk</a>
+      <a href="../health/">Customer health</a>
+      <a href="../forecast/">Forecasting</a>
+    </nav>
+  </div></header>
+
+  <main>
+    <h1>Churn risk scorer</h1>
+    <p class="lede">Estimates how likely a retail-bank customer is to leave in the next quarter, and shows which behaviours push that risk up or down.</p>
+    <span class="note">Trained on 20,000 synthetic customers. No real customer data is used.</span>
+
+    <div class="grid four" style="margin-top:22px" id="kpis"></div>
+
+    <h2>Score a customer</h2>
+    <div class="grid two">
+      <div class="card">
+        <h3>Customer profile</h3>
+        <div id="sliders"></div>
+        <div class="tabs" id="presets"></div>
+      </div>
+      <div class="card">
+        <h3>Churn probability</h3>
+        <div style="display:flex;align-items:baseline;gap:14px">
+          <div class="score" id="prob">–</div>
+          <span class="badge" id="band"></span>
+        </div>
+        <div class="meter"><div id="meter"></div></div>
+        <div style="font-size:13px;color:var(--muted)" id="compare"></div>
+        <div class="drivers">
+          <h3 style="margin-top:18px">What drives this score</h3>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Red bars raise churn risk compared with an average customer; green bars lower it.</div>
+          <div id="drivers"></div>
+        </div>
+      </div>
+    </div>
+
+    <h2>Is the model well calibrated?</h2>
+    <div class="card">
+      <p style="margin-top:0;font-size:14px;color:var(--muted)">Test customers were sorted by predicted risk and split into ten equal groups. If the model is well calibrated, predicted and actual churn rates match in each group.</p>
+      <table>
+        <thead><tr><th>Risk group</th><th class="num">Predicted churn</th><th class="num">Actual churn</th></tr></thead>
+        <tbody id="calibration"></tbody>
+      </table>
+    </div>
+
+    <h2>How it works</h2>
+    <div class="card prose">
+      <ul>
+        <li><strong>Data.</strong> A Python script generates 20,000 customers with tenure, products held, transactions, balance trend, complaints, app logins and whether their salary is paid into the account. The ground truth includes a non-linear tenure effect and an interaction between complaints and low engagement, so the model has something realistic to miss.</li>
+        <li><strong>Model.</strong> Logistic regression on standardised features (scikit-learn), with a 75/25 stratified train/test split. A gradient-boosting model was trained as a benchmark.</li>
+        <li><strong>Why the simpler model.</strong> <span id="why"></span></li>
+        <li><strong>In the browser.</strong> The coefficients and scaling parameters are exported to JSON, and this page applies the same formula in JavaScript, so there's no server.</li>
+        <li><strong>How it would be used.</strong> A retention team would work the top decile first, where churn runs at <span id="lift"></span> the average rate.</li>
+      </ul>
+      <p><a href="https://github.com/sammiel/ml-portfolio/blob/main/training/churn.py">Training code on GitHub</a></p>
+    </div>
+  </main>
+
+  <footer><div class="inner">Built by Samuel Agbaglo · Synthetic data · Models trained in Python, served as static files</div></footer>
+
+  <script src="../assets/common.js"></script>
+  <script>
+    const PRESETS = {
+      "Loyal salaried": [96, 4, 60, 8, 0, 25, 1],
+      "New and quiet": [4, 1, 6, -30, 1, 2, 0],
+      "Unhappy regular": [40, 2, 30, -15, 4, 3, 1],
+    };
+
+    loadModel("model.json").then((model) => {
+      const m = model.metrics;
+      document.getElementById("kpis").innerHTML = [
+        ["Customers", m.rows.toLocaleString(), "synthetic"],
+        ["Base churn rate", pct(m.churn_rate, 1), "per quarter"],
+        ["Test AUC", m.logreg_auc.toFixed(3), `gradient boosting: ${m.gbm_auc.toFixed(3)}`],
+        ["Top-decile lift", `${m.top_decile_lift.toFixed(1)}×`, "churn rate vs average"],
+      ].map(([l, v, s]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div></div>`).join("");
+
+      document.getElementById("why").textContent =
+        `It matched or beat gradient boosting on held-out data (AUC ${m.logreg_auc.toFixed(3)} vs ${m.gbm_auc.toFixed(3)}), and each coefficient can be explained to a relationship manager.`;
+      document.getElementById("lift").textContent = `${m.top_decile_lift.toFixed(1)} times`;
+
+      document.getElementById("calibration").innerHTML = model.calibration.map((c, i) =>
+        `<tr><td>${i === 0 ? "1 (lowest risk)" : i === 9 ? "10 (highest risk)" : i + 1}</td><td class="num">${pct(c.predicted, 1)}</td><td class="num">${pct(c.actual, 1)}</td></tr>`
+      ).join("");
+
+      const update = (values) => {
+        const { probability, contributions } = scoreLogistic(model, values);
+        const prob = document.getElementById("prob");
+        prob.textContent = probability < 0.005 ? "<1%" : pct(probability);
+        const band = document.getElementById("band");
+        const [name, cls, colour] = probability < 0.15 ? ["Low risk", "good", "var(--good)"]
+          : probability < 0.35 ? ["Medium risk", "warn", "var(--warn)"] : ["High risk", "bad", "var(--bad)"];
+        band.textContent = name;
+        band.className = `badge ${cls}`;
+        const meter = document.getElementById("meter");
+        meter.style.width = `${Math.max(2, probability * 100)}%`;
+        meter.style.background = colour;
+        const ratio = probability / m.churn_rate;
+        document.getElementById("compare").textContent =
+          `${ratio.toFixed(1)}× the average customer's churn rate of ${pct(m.churn_rate, 1)}.`;
+        renderDrivers(document.getElementById("drivers"), contributions, false);
+      };
+
+      const sliders = buildSliders(
+        document.getElementById("sliders"),
+        model.features,
+        model.features.map((f) => f.default),
+        update,
+      );
+      update(sliders.read());
+
+      const presets = document.getElementById("presets");
+      presets.innerHTML = `<span style="font-size:13px;color:var(--muted);align-self:center">Try:</span>` +
+        Object.keys(PRESETS).map((k) => `<button type="button">${k}</button>`).join("");
+      presets.querySelectorAll("button").forEach((b) =>
+        b.addEventListener("click", () => sliders.set(PRESETS[b.textContent])));
+    });
+  </script>
+</body>
+</html>

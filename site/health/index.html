@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Customer health scoring · Samuel Agbaglo</title>
+  <meta name="description" content="Renewal-based health score for B2B accounts, trained in Python and scored in the browser.">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <header class="site"><div class="inner">
+    <a class="brand" href="../">Samuel Agbaglo · ML projects</a>
+    <nav>
+      <a href="../churn/">Churn risk</a>
+      <a class="active" href="../health/">Customer health</a>
+      <a href="../forecast/">Forecasting</a>
+    </nav>
+  </div></header>
+
+  <main>
+    <h1>Customer health scoring</h1>
+    <p class="lede">A 0 to 100 health score for B2B learning-platform accounts, based on how likely each account is to renew. A customer success team would use it to decide which accounts to call first.</p>
+    <span class="note">Trained on 6,000 synthetic accounts. No real customer data is used.</span>
+
+    <div class="grid four" style="margin-top:22px" id="kpis"></div>
+
+    <h2>Does the score separate renewals from losses?</h2>
+    <div class="card">
+      <table>
+        <thead><tr><th>Tier</th><th>Score range</th><th class="num">Share of test accounts</th><th class="num">Actual renewal rate</th></tr></thead>
+        <tbody id="tiers"></tbody>
+      </table>
+    </div>
+
+    <h2>Account portfolio</h2>
+    <div class="grid two">
+      <div class="card">
+        <div class="tabs" id="filters"></div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Account</th><th class="num">Score</th><th>Tier</th><th>Biggest drag</th></tr></thead>
+            <tbody id="accounts"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h3 id="detail-title">Select an account</h3>
+        <div style="display:flex;align-items:baseline;gap:14px">
+          <div class="score" id="score">–</div>
+          <span class="badge" id="tier"></span>
+        </div>
+        <div class="meter"><div id="meter"></div></div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:14px">Move the sliders to test what would change this account's score.</div>
+        <div id="sliders"></div>
+        <h3 style="margin-top:18px">What drives this score</h3>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Green bars raise the score compared with an average account; red bars lower it.</div>
+        <div id="drivers"></div>
+      </div>
+    </div>
+
+    <h2>How it works</h2>
+    <div class="card prose">
+      <ul>
+        <li><strong>Data.</strong> A Python script generates 6,000 accounts with seat utilisation, active learners, learning hours, quarter-on-quarter utilisation change, admin logins, support tickets and whether there is a named executive sponsor, plus whether each account renewed.</li>
+        <li><strong>Model.</strong> Logistic regression predicting renewal (scikit-learn), evaluated on a 25% held-out set. The health score is the predicted renewal probability multiplied by 100.</li>
+        <li><strong>Why a model rather than hand-picked weights.</strong> Many health scores are weighted checklists agreed in a meeting. Fitting the weights to renewal outcomes means each input counts as much as it actually predicts renewal, and the tier table above shows whether the tiers mean something.</li>
+        <li><strong>Tiers.</strong> Healthy is 70 and above, Watch is 40 to 69, and At risk is below 40. The portfolio shows 120 new accounts that were not used in training.</li>
+        <li><strong>In the browser.</strong> The model is exported to JSON and scored in JavaScript, so there's no server.</li>
+      </ul>
+      <p><a href="https://github.com/sammiel/ml-portfolio/blob/main/training/health.py">Training code on GitHub</a></p>
+    </div>
+  </main>
+
+  <footer><div class="inner">Built by Samuel Agbaglo · Synthetic data · Models trained in Python, served as static files</div></footer>
+
+  <script src="../assets/common.js"></script>
+  <script>
+    const tierFor = (score, tiers) => tiers.find((t) => score >= t.min);
+    const tierClass = { "Healthy": "good", "Watch": "warn", "At risk": "bad" };
+    const tierColour = { "Healthy": "var(--good)", "Watch": "var(--warn)", "At risk": "var(--bad)" };
+
+    loadModel("model.json").then((model) => {
+      const m = model.metrics;
+      const scored = model.portfolio.map((a) => {
+        const r = scoreLogistic(model, a.values);
+        const score = Math.round(r.probability * 100);
+        const drag = [...r.contributions].sort((x, y) => x.value - y.value)[0];
+        return { ...a, score, tier: tierFor(score, model.tiers).name, drag: drag.value < 0 ? drag.label : "None" };
+      }).sort((a, b) => a.score - b.score);
+
+      const count = (t) => scored.filter((a) => a.tier === t).length;
+      document.getElementById("kpis").innerHTML = [
+        ["Test AUC", m.auc.toFixed(3), "renewal vs non-renewal"],
+        ["Healthy", count("Healthy"), "accounts in portfolio"],
+        ["Watch", count("Watch"), "accounts in portfolio"],
+        ["At risk", count("At risk"), "accounts in portfolio"],
+      ].map(([l, v, s]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div></div>`).join("");
+
+      const ranges = { "Healthy": "70 to 100", "Watch": "40 to 69", "At risk": "0 to 39" };
+      document.getElementById("tiers").innerHTML = m.tiers.map((t) =>
+        `<tr><td><span class="badge ${tierClass[t.tier]}">${t.tier}</span></td><td>${ranges[t.tier]}</td><td class="num">${pct(t.share)}</td><td class="num">${pct(t.renewal_rate)}</td></tr>`
+      ).join("");
+
+      const update = (values) => {
+        const { probability, contributions } = scoreLogistic(model, values);
+        const score = Math.round(probability * 100);
+        const tier = tierFor(score, model.tiers).name;
+        document.getElementById("score").textContent = score;
+        const badge = document.getElementById("tier");
+        badge.textContent = tier;
+        badge.className = `badge ${tierClass[tier]}`;
+        const meter = document.getElementById("meter");
+        meter.style.width = `${Math.max(2, score)}%`;
+        meter.style.background = tierColour[tier];
+        renderDrivers(document.getElementById("drivers"), contributions, true);
+      };
+
+      const sliders = buildSliders(
+        document.getElementById("sliders"),
+        model.features,
+        model.features.map((f) => f.default),
+        update,
+      );
+
+      let filter = "All";
+      let selected = scored[0].id;
+      const renderTable = () => {
+        const rows = scored.filter((a) => filter === "All" || a.tier === filter);
+        document.getElementById("accounts").innerHTML = rows.map((a) =>
+          `<tr class="clickable${a.id === selected ? " selected" : ""}" data-id="${a.id}">
+            <td>${a.id}</td><td class="num">${a.score}</td>
+            <td><span class="badge ${tierClass[a.tier]}">${a.tier}</span></td><td>${a.drag}</td></tr>`
+        ).join("");
+        document.querySelectorAll("#accounts tr").forEach((tr) =>
+          tr.addEventListener("click", () => select(tr.dataset.id)));
+      };
+      const select = (id) => {
+        selected = id;
+        const a = scored.find((x) => x.id === id);
+        document.getElementById("detail-title").textContent = `${a.id} · what-if analysis`;
+        sliders.set(a.values);
+        renderTable();
+      };
+
+      const filters = document.getElementById("filters");
+      filters.innerHTML = ["All", "At risk", "Watch", "Healthy"].map((f) =>
+        `<button type="button" class="${f === filter ? "on" : ""}">${f}</button>`).join("");
+      filters.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+        filter = b.textContent;
+        filters.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+        renderTable();
+      }));
+
+      select(selected);
+    });
+  </script>
+</body>
+</html>
